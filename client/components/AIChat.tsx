@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Table,
@@ -278,7 +278,7 @@ export default function AIChat({
   const [isTyping, setIsTyping] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const scrollToBottom = useCallback((smooth = false) => {
@@ -524,11 +524,28 @@ export default function AIChat({
     [input, isSending, isTyping, scrollToBottom, accessToken],
   );
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Enter") return;
+
+    // Cmd/Ctrl/Shift + Enter => newline
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      const el = e.currentTarget;
+      const start = el.selectionStart ?? input.length;
+      const end = el.selectionEnd ?? input.length;
+      const next = input.slice(0, start) + "\n" + input.slice(end);
+      setInput(next);
+      requestAnimationFrame(() => {
+        try {
+          el.selectionStart = el.selectionEnd = start + 1;
+        } catch {}
+      });
+      return;
     }
+
+    // Plain Enter => send
+    e.preventDefault();
+    handleSend();
   };
 
   const showFloatingButton =
@@ -757,14 +774,15 @@ export default function AIChat({
                       handleSend();
                     }}
                   >
-                    <Input
+                    <Textarea
                       ref={inputRef}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={onKeyDown}
                       placeholder="Type your message…"
-                      className="min-h-[48px] sm:min-h-[52px] rounded-xl px-4 shadow-sm"
+                      className="min-h-[48px] sm:min-h-[52px] max-h-40 rounded-xl px-4 py-3 shadow-sm resize-none"
                       disabled={isSending || isTyping}
+                      rows={1}
                     />
                     <Button
                       type="submit"
