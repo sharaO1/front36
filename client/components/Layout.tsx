@@ -130,6 +130,21 @@ export default function Layout({ children }: LayoutProps) {
     }
   }, [openChat]);
 
+  // Keep CSS var for mobile nav height updated
+  useEffect(() => {
+    const apply = () => {
+      const isMobile = window.innerWidth < 1024; // lg breakpoint
+      const navHeight = isMobile && !hideMobileNav ? 64 : 0; // h-16
+      document.documentElement.style.setProperty(
+        "--mobile-nav-height",
+        `${navHeight}px`,
+      );
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, [hideMobileNav]);
+
   // Auto-hide bottom nav on scroll direction and when inputs are focused
   useEffect(() => {
     const onScroll = () => {
