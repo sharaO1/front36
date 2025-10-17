@@ -72,6 +72,7 @@ import {
   User,
   Package2,
 } from "lucide-react";
+import { AdminOnly } from "@/components/PermissionGate";
 
 interface Store {
   id: string;
@@ -1366,28 +1367,69 @@ export default function Warehouse() {
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
-  const managerFilialId =
-    authUser?.role === "manager" ? (authUser as any).filialId : null;
+  const scopedFilial = (() => {
+    const r = authUser?.role;
+    if (!r || r === "super_admin" || r === "admin") {
+      return { id: null as string | null, name: null as string | null };
+    }
+    const idRaw =
+      (authUser as any).filialId ?? (authUser as any).filialID ?? (authUser as any).storeId ?? null;
+    const nameRaw =
+      (authUser as any).filialName ?? (authUser as any).location ?? null;
+    const id = idRaw != null ? String(idRaw) : null;
+    const name = nameRaw != null ? String(nameRaw).toLowerCase().trim() : null;
+    return { id, name };
+  })();
+  const isScoped = Boolean(scopedFilial.id || scopedFilial.name);
+
+  const matchesFilial = (st: ProductStore) => {
+    if (!isScoped) return true;
+    const stId = st && st.storeId != null ? String(st.storeId) : "";
+    const stName = st && st.storeName ? String(st.storeName).toLowerCase().trim() : "";
+    return (
+      (scopedFilial.id && stId === scopedFilial.id) ||
+      (scopedFilial.name && stName === scopedFilial.name)
+    );
+  };
+
+  const getVisibleQuantity = (product: Product) => {
+    if (!isScoped) return product.quantity;
+    const s = (product.stores || []).find(matchesFilial);
+    return s ? s.quantity : 0;
+  };
+
+  const getQuantityAtLocation = (product: Product, locId: string | null) => {
+    if (!product || !locId) return 0;
+    const s = (product.stores || []).find(
+      (st) => String(st.storeId) === String(locId) || String(st.storeName).toLowerCase().trim() === String(locId).toLowerCase().trim(),
+    );
+    return s ? s.quantity : 0;
+  };
+
+  const visibleStores = (stores: ProductStore[]) => {
+    if (!isScoped) return stores;
+    return (stores || []).filter(matchesFilial);
+  };
 
   const filteredHistory = warehouseHistory.filter((history: any) => {
     const matchesFilter =
       historyFilter === "all" || history.action === historyFilter;
     const matchesFilial = (() => {
-      if (!managerFilialId) return true;
+      if (!isScoped) return true;
       const performerId = history.performedById;
       if (!performerId) return false;
       const fid = usersFilialMap[performerId];
-      return fid ? String(fid) === String(managerFilialId) : false;
+      return fid ? String(fid) === String(scopedFilial.id) : false;
     })();
     return matchesFilter && matchesFilial;
   });
 
   const filteredMovements = stockMovements.filter((m: any) => {
-    if (!managerFilialId) return true;
+    if (!isScoped) return true;
     const performerId = m.performedById;
     if (!performerId) return false;
     const fid = usersFilialMap[performerId];
-    return fid ? String(fid) === String(managerFilialId) : false;
+    return fid ? String(fid) === String(scopedFilial.id) : false;
   });
 
   const getStatusBadge = (status: string) => {
@@ -2353,6 +2395,7 @@ export default function Warehouse() {
             {t("warehouse.stock_out")}
           </Button>
 
+          <AdminOnly>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -2635,6 +2678,7 @@ export default function Warehouse() {
               </div>
             </DialogContent>
           </Dialog>
+          </AdminOnly>
         </div>
       </div>
 
@@ -2676,7 +2720,7 @@ export default function Warehouse() {
                     <div className="font-medium">{product.name}</div>
                     <div className="text-sm text-muted-foreground">
                       {product.sku} • {t("warehouse.current_stock")}:{" "}
-                      {product.quantity}
+                      {getVisibleQuantity(product)}
                     </div>
                   </div>
                 </Button>
@@ -2698,7 +2742,7 @@ export default function Warehouse() {
           <CardContent>
             <div className="text-2xl font-bold">{products.length}</div>
             <p className="text-xs text-muted-foreground">
-              {products.filter((p) => p.status === "in-stock").length}{" "}
+              {products.filter((p) => calculateStatus(getVisibleQuantity(p), p.minStock) === "in-stock").length}{" "}
               {t("warehouse.in_stock")}
             </p>
           </CardContent>
@@ -2713,7 +2757,7 @@ export default function Warehouse() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-yellow-600">
-              {products.filter((p) => p.status === "low-stock").length}
+              {products.filter((p) => calculateStatus(getVisibleQuantity(p), p.minStock) === "low-stock").length}
             </div>
             <p className="text-xs text-muted-foreground">
               {t("warehouse.need_immediate_attention")}
@@ -2730,7 +2774,7 @@ export default function Warehouse() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {products.filter((p) => p.status === "out-of-stock").length}
+              {products.filter((p) => calculateStatus(getVisibleQuantity(p), p.minStock) === "out-of-stock").length}
             </div>
             <p className="text-xs text-muted-foreground">
               {t("warehouse.require_restocking")}
@@ -2855,13 +2899,13 @@ export default function Warehouse() {
                         </TableCell>
                         <TableCell>{product.category}</TableCell>
                         <TableCell>
-                          <div className="font-medium">{product.quantity}</div>
+                          <div className="font-medium">{getVisibleQuantity(product)}</div>
                           <div className="text-xs text-muted-foreground">
                             {t("warehouse.min_stock")}: {product.minStock} |{" "}
                             {t("warehouse.max_stock")}: {product.maxStock}
                           </div>
                         </TableCell>
-                        <TableCell>{getStatusBadge(product.status)}</TableCell>
+                        <TableCell>{getStatusBadge(calculateStatus(getVisibleQuantity(product), product.minStock))}</TableCell>
                         <TableCell>
                           <div className="font-medium">
                             ${product.sellingPrice.toLocaleString()}
@@ -2882,73 +2926,77 @@ export default function Warehouse() {
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setEditingProduct(product);
-                                setNewProduct({
-                                  name: product.name,
-                                  category: product.category,
-                                  brand: product.brand,
-                                  sku: product.sku,
-                                  description: product.description,
-                                  quantity: product.quantity,
-                                  minStock: product.minStock,
-                                  maxStock: product.maxStock,
-                                  costPrice: product.costPrice,
-                                  sellingPrice: product.sellingPrice,
-                                  supplier: product.supplier,
-                                  suppliers: product.supplier
-                                    ? String(product.supplier)
-                                        .split(",")
-                                        .map((p) => p.trim())
-                                        .filter(Boolean)
-                                    : [],
-                                  location: product.location,
-                                  expiryDate: product.expiryDate,
-                                  tags: product.tags,
-                                  status: product.status,
-                                });
-                                setIsEditDialogOpen(true);
-                              }}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="outline" size="sm">
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
+                            <AdminOnly>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingProduct(product);
+                                  setNewProduct({
+                                    name: product.name,
+                                    category: product.category,
+                                    brand: product.brand,
+                                    sku: product.sku,
+                                    description: product.description,
+                                    quantity: product.quantity,
+                                    minStock: product.minStock,
+                                    maxStock: product.maxStock,
+                                    costPrice: product.costPrice,
+                                    sellingPrice: product.sellingPrice,
+                                    supplier: product.supplier,
+                                    suppliers: product.supplier
+                                      ? String(product.supplier)
+                                          .split(",")
+                                          .map((p) => p.trim())
+                                          .filter(Boolean)
+                                      : [],
+                                    location: product.location,
+                                    expiryDate: product.expiryDate,
+                                    tags: product.tags,
+                                    status: product.status,
+                                  });
+                                  setIsEditDialogOpen(true);
+                                }}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            </AdminOnly>
+                            <AdminOnly>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="outline" size="sm">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
 
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>
-                                    {t("warehouse.delete_product_title")}
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    {t("warehouse.delete_product_confirm", {
-                                      name: product.name,
-                                    })}
-                                    {product.name}{" "}
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>
-                                    {t("common.cancel")}
-                                  </AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className={buttonVariants({
-                                      variant: "destructive",
-                                    })}
-                                    onClick={() => deleteProduct(product.id)}
-                                  >
-                                    {t("common.delete")}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      {t("warehouse.delete_product_title")}
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {t("warehouse.delete_product_confirm", {
+                                        name: product.name,
+                                      })}
+                                      {product.name}{" "}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>
+                                      {t("common.cancel")}
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className={buttonVariants({
+                                        variant: "destructive",
+                                      })}
+                                      onClick={() => deleteProduct(product.id)}
+                                    >
+                                      {t("common.delete")}
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </AdminOnly>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -3518,6 +3566,7 @@ export default function Warehouse() {
           >
             <ArrowDown className="h-5 w-5" />
           </Button>
+          <AdminOnly>
           <Button
             className="shadow-business-lg"
             size="icon"
@@ -3526,6 +3575,7 @@ export default function Warehouse() {
           >
             <Plus className="h-5 w-5" />
           </Button>
+        </AdminOnly>
         </div>
       </div>
 
@@ -3970,13 +4020,13 @@ export default function Warehouse() {
                 <div className="text-sm text-muted-foreground">
                   {t("warehouse.current_stock")}:{" "}
                   <span className="font-medium">
-                    {selectedProduct.quantity}
+                    {selectedProduct ? getQuantityAtLocation(selectedProduct, stockLocation) : 0}
                   </span>
                 </div>
                 <div className="text-sm text-muted-foreground">
                   {t("warehouse.new_stock")}:{" "}
                   <span className="font-medium">
-                    {selectedProduct.quantity + stockQuantity}
+                    {(selectedProduct ? getQuantityAtLocation(selectedProduct, stockLocation) : 0) + stockQuantity}
                   </span>
                 </div>
               </div>
@@ -4053,7 +4103,7 @@ export default function Warehouse() {
                 id="stockOutQuantity"
                 type="number"
                 min="1"
-                max={selectedProduct?.quantity || 0}
+                max={selectedProduct ? getQuantityAtLocation(selectedProduct, stockLocation) : 0}
                 value={stockQuantity}
                 onChange={(e) =>
                   setStockQuantity(parseInt(e.target.value) || 0)
@@ -4213,16 +4263,16 @@ export default function Warehouse() {
                 <div className="text-sm text-muted-foreground">
                   {t("warehouse.current_stock")}:{" "}
                   <span className="font-medium">
-                    {selectedProduct.quantity}
+                    {selectedProduct ? getQuantityAtLocation(selectedProduct, stockLocation) : 0}
                   </span>
                 </div>
                 <div className="text-sm text-muted-foreground">
                   {t("warehouse.remaining_stock")}:{" "}
                   <span className="font-medium">
-                    {Math.max(0, selectedProduct.quantity - stockQuantity)}
+                    {Math.max(0, (selectedProduct ? getQuantityAtLocation(selectedProduct, stockLocation) : 0) - stockQuantity)}
                   </span>
                 </div>
-                {stockQuantity > selectedProduct.quantity && (
+                {selectedProduct && stockQuantity > getQuantityAtLocation(selectedProduct, stockLocation) && (
                   <div className="text-sm text-red-600 mt-1">
                     ⚠️ {t("warehouse.cannot_remove_more_than_available")}
                   </div>
@@ -4327,7 +4377,7 @@ export default function Warehouse() {
               stats={[
                 {
                   label: t("warehouse.total_stock"),
-                  value: selectedProduct.quantity,
+                  value: getVisibleQuantity(selectedProduct as Product),
                 },
                 {
                   label: t("warehouse.min_stock"),
@@ -4348,7 +4398,7 @@ export default function Warehouse() {
                 </div>
                 <div className="space-y-2">
                   {selectedProduct.stores.length > 0 ? (
-                    selectedProduct.stores.map((store) => {
+                    visibleStores(selectedProduct.stores).map((store) => {
                       const fi = filialOptions.find(
                         (f) => f.id === store.storeId,
                       );

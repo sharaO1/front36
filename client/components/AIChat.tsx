@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Table,
@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useChatStore, ChatMessage, EMPTY_MESSAGES } from "@/stores/chatStore";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 function formatMessage(t: string): string {
   if (!t) return "";
@@ -247,6 +248,7 @@ export default function AIChat({
 }: AIChatProps) {
   const [isOpen, setIsOpen] = useState(variant === "inline" || defaultOpen);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
@@ -276,7 +278,7 @@ export default function AIChat({
   const [isTyping, setIsTyping] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const scrollToBottom = useCallback((smooth = false) => {
@@ -374,7 +376,10 @@ export default function AIChat({
     async (fullText: string) => {
       setIsTyping(true);
       const id = `ai-${Date.now()}`;
-      setStoreMessages((prev) => [...prev, { id, role: "ai", text: "" }], userId);
+      setStoreMessages(
+        (prev) => [...prev, { id, role: "ai", text: "" }],
+        userId,
+      );
 
       await new Promise<void>((resolve) => {
         let i = 0;
@@ -414,11 +419,7 @@ export default function AIChat({
       };
       const aiId = `ai-${Date.now()}`;
       setStoreMessages(
-        (prev) => [
-          ...prev,
-          userMsg,
-          { id: aiId, role: "ai", text: "" },
-        ],
+        (prev) => [...prev, userMsg, { id: aiId, role: "ai", text: "" }],
         userId,
       );
       setInput("");
@@ -457,7 +458,8 @@ export default function AIChat({
                 if (done) break;
                 acc += decoder.decode(value, { stream: true });
                 setStoreMessages(
-                  (prev) => prev.map((m) => (m.id === aiId ? { ...m, text: acc } : m)),
+                  (prev) =>
+                    prev.map((m) => (m.id === aiId ? { ...m, text: acc } : m)),
                   userId,
                 );
                 scrollToBottom(true);
@@ -522,26 +524,48 @@ export default function AIChat({
     [input, isSending, isTyping, scrollToBottom, accessToken],
   );
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Enter") return;
+
+    // Cmd/Ctrl/Shift + Enter => newline
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      const el = e.currentTarget;
+      const start = el.selectionStart ?? input.length;
+      const end = el.selectionEnd ?? input.length;
+      const next = input.slice(0, start) + "\n" + input.slice(end);
+      setInput(next);
+      requestAnimationFrame(() => {
+        try {
+          el.selectionStart = el.selectionEnd = start + 1;
+        } catch {}
+      });
+      return;
     }
+
+    // Plain Enter => send
+    e.preventDefault();
+    handleSend();
   };
 
   const showFloatingButton =
     (variant === "floating" || page) && !isOpen && showTrigger;
   const containerFixed = isFullScreen || (variant === "floating" && isOpen);
 
-  // Exit fullscreen on Escape
+  // Always full-screen on mobile
   useEffect(() => {
-    if (!isFullScreen) return;
+    if (isMobile && isOpen && !isFullScreen) setIsFullScreen(true);
+  }, [isMobile, isOpen, isFullScreen]);
+
+  // Exit fullscreen on Escape (desktop only)
+  useEffect(() => {
+    if (!isFullScreen || isMobile) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setIsFullScreen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isFullScreen]);
+  }, [isFullScreen, isMobile]);
 
   // Lock page scroll only for fullscreen or dedicated chat page, not for floating dock
   useEffect(() => {
@@ -605,26 +629,28 @@ export default function AIChat({
                 <Bot className="h-5 w-5" /> AI Chat
               </CardTitle>
               <div className="absolute right-2 top-2 flex gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    if (page) {
-                      navigate("/dashboard?chat=open");
-                      return;
-                    }
-                    navigate("/chat");
-                  }}
-                  className="h-8 w-8 rounded-full"
-                  aria-label={page ? "Dock to dashboard" : "Open full screen"}
-                >
-                  {page ? (
-                    <Minimize2 className="h-4 w-4" />
-                  ) : (
-                    <Maximize2 className="h-4 w-4" />
-                  )}
-                </Button>
+                {!isMobile && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (page) {
+                        navigate("/dashboard?chat=open");
+                        return;
+                      }
+                      navigate("/chat");
+                    }}
+                    className="h-8 w-8 rounded-full"
+                    aria-label={page ? "Dock to dashboard" : "Open full screen"}
+                  >
+                    {page ? (
+                      <Minimize2 className="h-4 w-4" />
+                    ) : (
+                      <Maximize2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="ghost"
@@ -642,8 +668,12 @@ export default function AIChat({
                     size="sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      // Hide chat only
                       setIsFullScreen(false);
+                      if (page) {
+                        // leave dedicated chat page
+                        navigate("/dashboard");
+                        return;
+                      }
                       setIsOpen(false);
                     }}
                     className="h-8 w-8 rounded-full"
@@ -733,7 +763,10 @@ export default function AIChat({
                   )}
                   style={
                     containerFixed
-                      ? { bottom: "env(safe-area-inset-bottom)" }
+                      ? {
+                          bottom:
+                            "calc(env(safe-area-inset-bottom) + var(--mobile-nav-height, 0px))",
+                        }
                       : undefined
                   }
                 >
@@ -744,14 +777,15 @@ export default function AIChat({
                       handleSend();
                     }}
                   >
-                    <Input
+                    <Textarea
                       ref={inputRef}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={onKeyDown}
                       placeholder="Type your message…"
-                      className="min-h-[48px] sm:min-h-[52px] rounded-xl px-4 shadow-sm"
+                      className="min-h-[48px] sm:min-h-[52px] max-h-40 rounded-xl px-4 py-3 shadow-sm resize-none"
                       disabled={isSending || isTyping}
+                      rows={1}
                     />
                     <Button
                       type="submit"
