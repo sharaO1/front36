@@ -763,7 +763,10 @@ export default function AIChat({
                   )}
                   style={
                     containerFixed
-                      ? { bottom: "env(safe-area-inset-bottom)" }
+                      ? {
+                          bottom:
+                            "calc(env(safe-area-inset-bottom) + var(--mobile-nav-height, 0px))",
+                        }
                       : undefined
                   }
                 >
