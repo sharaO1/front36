@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,8 @@ export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const openChat = searchParams.get("chat") === "open";
+  const [hideMobileNav, setHideMobileNav] = useState(false);
+  const lastScrollRef = useRef(0);
 
   const allNavigation = [
     {
@@ -127,6 +129,35 @@ export default function Layout({ children }: LayoutProps) {
       navigate(`${location.pathname}${qs ? `?${qs}` : ""}`, { replace: true });
     }
   }, [openChat]);
+
+  // Auto-hide bottom nav on scroll direction and when inputs are focused
+  useEffect(() => {
+    const onScroll = () => {
+      const y = window.scrollY || 0;
+      const last = lastScrollRef.current;
+      const delta = Math.abs(y - last);
+      if (delta < 8) return;
+      setHideMobileNav(y > last && y > 24);
+      lastScrollRef.current = y;
+    };
+    const onFocusIn = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      const ce = t.getAttribute("contenteditable");
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || ce === "true")
+        setHideMobileNav(true);
+    };
+    const onFocusOut = () => setHideMobileNav(false);
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("focusin", onFocusIn);
+    window.addEventListener("focusout", onFocusOut);
+    return () => {
+      window.removeEventListener("scroll", onScroll as any);
+      window.removeEventListener("focusin", onFocusIn as any);
+      window.removeEventListener("focusout", onFocusOut as any);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background overflow-x-hidden">
@@ -433,7 +464,12 @@ export default function Layout({ children }: LayoutProps) {
         </main>
 
         {/* Mobile bottom navigation */}
-        <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200/60 dark:border-gray-700/60 bg-white/90 dark:bg-gray-900/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 lg:hidden">
+        <footer
+          className={cn(
+            "fixed inset-x-0 bottom-0 z-40 border-t border-gray-200/60 dark:border-gray-700/60 bg-white/90 dark:bg-gray-900/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 lg:hidden transition-transform duration-300",
+            hideMobileNav ? "translate-y-full" : "translate-y-0",
+          )}
+        >
           <nav className="grid grid-cols-5 h-16">
             {[
               {
